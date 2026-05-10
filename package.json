@@ -1,0 +1,36 @@
+{
+  "name": "presentation-remote",
+  "version": "1.0.0",
+  "description": "A Wi-Fi WebSocket slide remote for controlling presentations from a phone browser.",
+  "main": "server.js",
+  "scripts": {
+    "dev": "concurrently \"vite --host 0.0.0.0\" \"node server.js\"",
+    "build": "vite build",
+    "start": "node server.js",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "keywords": [
+    "presentation",
+    "remote",
+    "websocket",
+    "slides"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "qrcode-terminal": "^0.12.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.11"
+  }
+}
