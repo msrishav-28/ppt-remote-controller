@@ -1,132 +1,120 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CommandDefinition, CommandId, ProfileId } from '../protocol';
-import { COMMANDS, PRIMARY_COMMAND_IDS, PROFILES, START_COMMAND_IDS, UTILITY_COMMAND_IDS } from '../protocol';
+import { COMMANDS, PRIMARY_COMMAND_IDS, PROFILES, START_COMMAND_IDS } from '../protocol';
+import { Icon, type IconName } from './Icon';
 import { useRemoteSocket } from './useRemoteSocket';
+import type { ConnectionState } from './types';
 
 const commandLookup = COMMANDS as Record<CommandId, CommandDefinition>;
 const profileEntries = Object.values(PROFILES);
+const reservedCommandIds = new Set<CommandId>([...PRIMARY_COMMAND_IDS, ...START_COMMAND_IDS]);
+
+const iconByCommand: Record<CommandId, IconName> = {
+  start: 'play',
+  prev: 'prev',
+  next: 'next',
+  black: 'black',
+  white: 'white',
+  end: 'end',
+  mediaPlayPause: 'play',
+  mediaPlaySelected: 'play',
+  zoomIn: 'zoomIn',
+  zoomOut: 'zoomOut',
+  zoomReset: 'reset'
+};
 
 function getInitialPin() {
   const pin = new URLSearchParams(window.location.search).get('pin') || '';
   return pin.replace(/\D/g, '').slice(0, 6);
 }
 
-function StatusPill({ connection, paired }: { connection: string; paired: boolean }) {
-  const label = paired ? 'Paired' : connection === 'connected' ? 'Connected' : connection === 'connecting' ? 'Connecting' : 'Disconnected';
+function StatusPill({ connection, paired }: { connection: ConnectionState; paired: boolean }) {
+  const state = paired ? 'paired' : connection;
+  const label =
+    state === 'paired'
+      ? 'Paired'
+      : state === 'connected'
+        ? 'Connected'
+        : state === 'connecting'
+          ? 'Connecting'
+          : state === 'error'
+            ? 'No server'
+            : 'Reconnecting';
 
   return (
-    <div className="status-pill" data-state={paired ? 'paired' : connection} aria-live="polite">
+    <div className="status" data-state={state} aria-live="polite">
       <span className="status-dot" aria-hidden="true" />
       <span>{label}</span>
     </div>
   );
 }
 
-function Icon({ name }: { name: 'play' | 'prev' | 'next' | 'square' | 'x' | 'white' | 'zoomIn' | 'zoomOut' | 'reset' | 'timer' | 'settings' }) {
-  if (name === 'play') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7L8 5z" fill="currentColor" /></svg>;
-  }
-  if (name === 'prev') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5 8.5 12l7 7" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-  }
-  if (name === 'next') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 5 7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-  }
-  if (name === 'square') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.5A.5.5 0 0 1 6.5 6h11a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11Z" fill="currentColor" /></svg>;
-  }
-  if (name === 'white') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.5A.5.5 0 0 1 6.5 6h11a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11Z" fill="none" stroke="currentColor" strokeWidth="2.2" /></svg>;
-  }
-  if (name === 'x') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></svg>;
-  }
-  if (name === 'zoomIn') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5v12M5 11h12M19 19l-3.5-3.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>;
-  }
-  if (name === 'zoomOut') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h12M19 19l-3.5-3.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>;
-  }
-  if (name === 'reset') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h7a5 5 0 1 1-4.7 6.7M8 7h4M8 7v4" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-  }
-  if (name === 'timer') {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4M12 8v5l3 2M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-  }
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM4 12h2m12 0h2M12 4v2m0 12v2M6.3 6.3l1.4 1.4m8.6 8.6 1.4 1.4m0-11.4-1.4 1.4m-8.6 8.6-1.4 1.4" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" /></svg>;
-}
-
-function iconForCommand(commandId: CommandId) {
-  const icons: Partial<Record<CommandId, Parameters<typeof Icon>[0]['name']>> = {
-    start: 'play',
-    prev: 'prev',
-    next: 'next',
-    black: 'square',
-    white: 'white',
-    end: 'x',
-    mediaPlayPause: 'play',
-    mediaPlaySelected: 'play',
-    zoomIn: 'zoomIn',
-    zoomOut: 'zoomOut',
-    zoomReset: 'reset'
-  };
-  return icons[commandId] || 'settings';
-}
-
 function CommandButton({
   command,
   disabled,
   onCommand,
-  variant = 'secondary'
+  variant
 }: {
   command: CommandDefinition;
   disabled: boolean;
   onCommand: (command: CommandDefinition) => void;
-  variant?: 'primary' | 'secondary' | 'nav';
+  variant: 'hero' | 'start' | 'tile';
 }) {
-  const label = variant === 'primary' ? command.label : command.shortLabel;
+  const [pulse, setPulse] = useState(0);
+  const label = variant === 'tile' ? command.shortLabel : command.label;
 
   return (
     <button
-      className={`control ${variant} ${command.tone === 'danger' ? 'danger' : ''}`}
       type="button"
+      className="key"
+      data-variant={variant}
+      data-tone={command.tone}
       disabled={disabled}
-      onClick={() => onCommand(command)}
       aria-label={command.label}
+      onClick={() => {
+        onCommand(command);
+        setPulse((current) => current + 1);
+      }}
     >
-      <Icon name={iconForCommand(command.id)} />
-      <span>{label}</span>
-      {variant !== 'nav' ? <small>{command.hint}</small> : null}
+      <span className="key-icon">
+        <Icon name={iconByCommand[command.id]} />
+      </span>
+      <span className="key-label">{label}</span>
+      {variant !== 'hero' ? <span className="key-hint">{command.hint}</span> : null}
+      {pulse > 0 ? <span className="key-flash" key={pulse} aria-hidden="true" /> : null}
     </button>
   );
 }
 
 function PairingScreen({
-  connected,
+  connection,
   error,
   onPair,
   serverLabel,
   wsUrl
 }: {
-  connected: boolean;
+  connection: ConnectionState;
   error?: string;
   onPair: (pin: string) => void;
   serverLabel: string;
   wsUrl: string;
 }) {
   const [pin, setPin] = useState(getInitialPin);
+  const autoPairedRef = useRef(false);
+  const connected = connection === 'connected';
 
   useEffect(() => {
-    if (connected && pin.length >= 4) {
+    if (connected && !autoPairedRef.current && pin.length >= 4) {
+      autoPairedRef.current = true;
       onPair(pin);
     }
-  }, [connected]);
+  }, [connected, onPair, pin]);
 
   return (
-    <section className="pairing-panel" aria-label="Pair remote">
-      <div className="pairing-copy">
+    <section className="pairing" aria-label="Pair remote">
+      <div className="pairing-head">
         <h2>Pair your phone</h2>
-        <p>Enter the PIN shown in the laptop terminal.</p>
+        <p>Enter the PIN shown in the laptop terminal to take control.</p>
       </div>
       <form
         className="pin-form"
@@ -145,12 +133,18 @@ function PairingScreen({
           maxLength={6}
           onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))}
           placeholder="0000"
+          aria-describedby={error ? 'pin-error' : undefined}
         />
-        <button className="pair-button" type="submit" disabled={!connected || pin.length < 4}>
-          Pair Remote
+        <button className="pin-submit" type="submit" disabled={!connected || pin.length < 4}>
+          {connected ? 'Pair remote' : 'Waiting for server…'}
         </button>
       </form>
-      <dl className="connection-list">
+      {error ? (
+        <p className="pairing-error" id="pin-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <dl className="conn-list">
         <div>
           <dt>Page</dt>
           <dd>{serverLabel}</dd>
@@ -160,7 +154,6 @@ function PairingScreen({
           <dd>{wsUrl.replace(/^wss?:\/\//, '')}</dd>
         </div>
       </dl>
-      {error ? <p className="error-text" role="alert">{error}</p> : null}
     </section>
   );
 }
@@ -168,34 +161,50 @@ function PairingScreen({
 function TimerPanel() {
   const [elapsed, setElapsed] = useState(0);
   const [running, setRunning] = useState(false);
+  const startedAtRef = useRef(0);
 
   useEffect(() => {
     if (!running) {
       return undefined;
     }
 
-    const startedAt = Date.now() - elapsed * 1000;
+    // Anchor to a fixed start time so the interval can be left alone; it is
+    // intentionally not restarted on every tick.
+    startedAtRef.current = Date.now() - elapsed * 1000;
     const interval = window.setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
-    }, 500);
+      setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
+    }, 250);
 
     return () => window.clearInterval(interval);
-  }, [elapsed, running]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
-  const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+  const minutes = Math.floor(elapsed / 60)
+    .toString()
+    .padStart(2, '0');
   const seconds = (elapsed % 60).toString().padStart(2, '0');
 
   return (
-    <section className="timer-panel" aria-label="Presenter timer">
-      <div>
-        <span className="panel-label"><Icon name="timer" /> Timer</span>
-        <strong>{minutes}:{seconds}</strong>
+    <section className="timer" aria-label="Presenter timer">
+      <div className="timer-display">
+        <span className="micro-label">
+          <Icon name="timer" /> Timer
+        </span>
+        <strong aria-live="off">
+          {minutes}:{seconds}
+        </strong>
       </div>
       <div className="timer-actions">
         <button type="button" onClick={() => setRunning((current) => !current)}>
           {running ? 'Pause' : 'Start'}
         </button>
-        <button type="button" onClick={() => { setElapsed(0); setRunning(false); }}>
+        <button
+          type="button"
+          onClick={() => {
+            setElapsed(0);
+            setRunning(false);
+          }}
+        >
           Reset
         </button>
       </div>
@@ -203,7 +212,7 @@ function TimerPanel() {
   );
 }
 
-function ProfileControls({
+function CommandGroups({
   activeProfile,
   disabled,
   onCommand,
@@ -215,59 +224,70 @@ function ProfileControls({
   onProfileChange: (profile: ProfileId) => void;
 }) {
   const profile = PROFILES[activeProfile];
-  const profileCommands = profile.commandIds.map((commandId) => commandLookup[commandId]);
+  const groupCommands = profile.commandIds
+    .filter((commandId) => !reservedCommandIds.has(commandId))
+    .map((commandId) => commandLookup[commandId]);
 
   return (
-    <section className="profile-panel" aria-label="Profile controls">
-      <div className="profile-tabs" role="tablist" aria-label="Command profiles">
+    <section className="groups" aria-label="Command groups">
+      <div className="segmented" role="tablist" aria-label="Command groups">
         {profileEntries.map((item) => (
           <button
             key={item.id}
             type="button"
             role="tab"
+            id={`tab-${item.id}`}
             aria-selected={activeProfile === item.id}
-            className={activeProfile === item.id ? 'active' : ''}
+            aria-controls={`panel-${item.id}`}
+            data-active={activeProfile === item.id || undefined}
             onClick={() => onProfileChange(item.id)}
           >
             {item.label}
           </button>
         ))}
       </div>
-      <div className="profile-grid">
-        {profileCommands.map((command) => (
-          <CommandButton key={command.id} command={command} disabled={disabled} onCommand={onCommand} />
+      <div
+        className="group-grid"
+        role="tabpanel"
+        id={`panel-${activeProfile}`}
+        aria-labelledby={`tab-${activeProfile}`}
+        data-count={groupCommands.length}
+      >
+        {groupCommands.map((command) => (
+          <CommandButton
+            key={command.id}
+            command={command}
+            disabled={disabled}
+            onCommand={onCommand}
+            variant="tile"
+          />
         ))}
       </div>
+      <p className="group-note">{profile.description}</p>
     </section>
   );
 }
 
-function SettingsPanel() {
+function GuidePanel() {
   return (
-    <section className="settings-panel" aria-label="Shortcut profiles">
-      <div className="panel-heading">
-        <Icon name="settings" />
-        <h2>Profiles</h2>
-      </div>
-      <div className="mapping-list">
-        {profileEntries.map((profile) => (
-          <article key={profile.id} className="mapping-card">
-            <h3>{profile.label}</h3>
-            <p>{profile.description}</p>
-            <ul>
-              {profile.commandIds.map((commandId) => {
-                const command = commandLookup[commandId];
-                return (
-                  <li key={command.id}>
-                    <span>{command.label}</span>
-                    <kbd>{command.hint}</kbd>
-                  </li>
-                );
-              })}
-            </ul>
-          </article>
-        ))}
-      </div>
+    <section className="guide" aria-label="Command reference">
+      {profileEntries.map((profile) => (
+        <article key={profile.id} className="guide-card">
+          <h3>{profile.label}</h3>
+          <p>{profile.description}</p>
+          <ul>
+            {profile.commandIds.map((commandId) => {
+              const command = commandLookup[commandId];
+              return (
+                <li key={command.id}>
+                  <span>{command.label}</span>
+                  <kbd>{command.hint}</kbd>
+                </li>
+              );
+            })}
+          </ul>
+        </article>
+      ))}
     </section>
   );
 }
@@ -275,38 +295,40 @@ function SettingsPanel() {
 export default function App() {
   const { pair, sendCommand, state, wsUrl } = useRemoteSocket();
   const [activeProfile, setActiveProfile] = useState<ProfileId>('universal');
-  const [view, setView] = useState<'remote' | 'settings'>('remote');
+  const [view, setView] = useState<'remote' | 'guide'>('remote');
+
   const serverLabel = window.location.host;
   const canControl = state.connection === 'connected' && state.paired;
+  const reconnecting = state.hasPaired && !canControl;
   const lastCommandLabel = state.lastAck ? commandLookup[state.lastAck].label : undefined;
-
-  const statusText = useMemo(() => {
-    if (state.lastError) {
-      return state.lastError;
-    }
-    if (lastCommandLabel) {
-      return `Sent: ${lastCommandLabel}`;
-    }
-    return state.lastEvent;
-  }, [lastCommandLabel, state.lastError, state.lastEvent]);
+  const statusText = state.lastError
+    ? state.lastError
+    : lastCommandLabel
+      ? `Delivered: ${lastCommandLabel}`
+      : state.lastEvent;
 
   function handleCommand(command: CommandDefinition) {
     sendCommand(command.id, command.profile);
   }
 
   return (
-    <main className="app-shell">
+    <main className="app">
       <header className="topbar">
         <div className="brand">
-          <h1>Slide Remote</h1>
-          <span>{serverLabel}</span>
+          <span className="brand-mark" aria-hidden="true">
+            <Icon name="next" />
+          </span>
+          <div className="brand-text">
+            <h1>Slide Remote</h1>
+            <span className="brand-sub">{serverLabel}</span>
+          </div>
         </div>
         <StatusPill connection={state.connection} paired={state.paired} />
       </header>
 
-      {!state.paired ? (
+      {!state.hasPaired ? (
         <PairingScreen
-          connected={state.connection === 'connected'}
+          connection={state.connection}
           error={state.lastError}
           onPair={pair}
           serverLabel={serverLabel}
@@ -314,36 +336,56 @@ export default function App() {
         />
       ) : (
         <>
-          <nav className="view-tabs" aria-label="Remote views">
-            <button type="button" className={view === 'remote' ? 'active' : ''} onClick={() => setView('remote')}>
+          <nav className="tabs" aria-label="Views">
+            <button
+              type="button"
+              data-active={view === 'remote' || undefined}
+              onClick={() => setView('remote')}
+            >
               Remote
             </button>
-            <button type="button" className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}>
-              Profiles
+            <button
+              type="button"
+              data-active={view === 'guide' || undefined}
+              onClick={() => setView('guide')}
+            >
+              Guide
             </button>
           </nav>
 
           {view === 'remote' ? (
-            <section className="remote-layout" aria-label="Presentation remote">
+            <section className="remote" aria-label="Presentation remote">
+              {reconnecting ? (
+                <p className="reconnect" role="status">
+                  Reconnecting to laptop…
+                </p>
+              ) : null}
+
               <div className="start-row">
                 {START_COMMAND_IDS.map((commandId) => (
-                  <CommandButton key={commandId} command={commandLookup[commandId]} disabled={!canControl} onCommand={handleCommand} variant="primary" />
+                  <CommandButton
+                    key={commandId}
+                    command={commandLookup[commandId]}
+                    disabled={!canControl}
+                    onCommand={handleCommand}
+                    variant="start"
+                  />
                 ))}
               </div>
 
-              <div className="nav-row">
+              <div className="hero">
                 {PRIMARY_COMMAND_IDS.map((commandId) => (
-                  <CommandButton key={commandId} command={commandLookup[commandId]} disabled={!canControl} onCommand={handleCommand} variant="nav" />
+                  <CommandButton
+                    key={commandId}
+                    command={commandLookup[commandId]}
+                    disabled={!canControl}
+                    onCommand={handleCommand}
+                    variant="hero"
+                  />
                 ))}
               </div>
 
-              <div className="utility-row">
-                {UTILITY_COMMAND_IDS.map((commandId) => (
-                  <CommandButton key={commandId} command={commandLookup[commandId]} disabled={!canControl} onCommand={handleCommand} />
-                ))}
-              </div>
-
-              <ProfileControls
+              <CommandGroups
                 activeProfile={activeProfile}
                 disabled={!canControl}
                 onCommand={handleCommand}
@@ -353,12 +395,12 @@ export default function App() {
               <TimerPanel />
             </section>
           ) : (
-            <SettingsPanel />
+            <GuidePanel />
           )}
         </>
       )}
 
-      <footer className="event-bar" aria-live="polite" data-error={Boolean(state.lastError)}>
+      <footer className="eventbar" data-error={Boolean(state.lastError) || undefined} aria-live="polite">
         {statusText}
       </footer>
     </main>

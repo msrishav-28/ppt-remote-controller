@@ -4,8 +4,7 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'err
 
 export type ClientMessage =
   | { type: 'pair'; pin: string }
-  | { type: 'command'; command: CommandId; profile: ProfileId }
-  | { type: 'ping' };
+  | { type: 'command'; command: CommandId; profile: ProfileId };
 
 export type ServerMessage =
   | { type: 'status'; connected: boolean; paired: boolean; profiles?: Record<ProfileId, ProfileDefinition>; commands?: Record<CommandId, CommandDefinition> }
@@ -16,6 +15,7 @@ export type ServerMessage =
 export interface RemoteSocketState {
   connection: ConnectionState;
   paired: boolean;
+  hasPaired: boolean;
   lastAck?: CommandId;
   lastError?: string;
   lastEvent: string;

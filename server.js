@@ -1,3 +1,5 @@
+'use strict';
+
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
@@ -8,21 +10,32 @@ const qrcode = require('qrcode-terminal');
 const WebSocket = require('ws');
 
 const { COMMANDS, PROFILES } = require('./protocol');
+const {
+  buildCommandKeyMap,
+  checkRateLimit,
+  createPairGuard,
+  isAllowedOrigin,
+  parseMessage,
+  safeResolveStaticPath
+} = require('./server-lib');
 
 function loadNutJs() {
-  try {
-    return require('@nut-tree-fork/nut-js');
-  } catch (forkError) {
-    const forkPackageMissing =
-      forkError.code === 'MODULE_NOT_FOUND' &&
-      forkError.message.includes('@nut-tree-fork/nut-js');
+  const candidates = ['@nut-tree-fork/nut-js', '@nut-tree/nut-js'];
 
-    if (!forkPackageMissing) {
-      throw forkError;
+  for (const name of candidates) {
+    try {
+      return require(name);
+    } catch (error) {
+      const isMissing = error.code === 'MODULE_NOT_FOUND' && error.message.includes(name);
+      if (!isMissing) {
+        throw error;
+      }
     }
-
-    return require('@nut-tree/nut-js');
   }
+
+  throw new Error(
+    'Keyboard control module not found. Run "npm install" to install @nut-tree-fork/nut-js.'
+  );
 }
 
 const { keyboard, Key } = loadNutJs();
@@ -34,9 +47,16 @@ const DIST_DIR = path.join(__dirname, 'dist');
 const INDEX_FILE = path.join(DIST_DIR, 'index.html');
 const DRY_RUN_KEYS = process.env.DRY_RUN_KEYS === '1';
 const PAIRING_PIN = process.env.CONTROL_PIN || crypto.randomInt(0, 10000).toString().padStart(4, '0');
+
 const RATE_LIMIT_WINDOW_MS = 1000;
 const RATE_LIMIT_MAX_COMMANDS = 8;
 const MAX_MESSAGE_BYTES = 1024;
+const HEARTBEAT_INTERVAL_MS = 30000;
+const PAIR_MAX_ATTEMPTS = 5;
+const PAIR_WINDOW_MS = 60000;
+const PAIR_LOCKOUT_MS = 30000;
+
+const allowedOriginPorts = new Set([String(PORT), String(FRONTEND_DEV_PORT)]);
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -51,28 +71,18 @@ const mimeTypes = {
   '.webmanifest': 'application/manifest+json; charset=utf-8'
 };
 
-function getCommandKeyMap() {
-  return Object.fromEntries(
-    Object.values(COMMANDS).map((command) => {
-      const keys = command.keyNames.map((keyName) => {
-        const key = Key[keyName];
-        if (key === undefined) {
-          throw new Error(`Unknown key mapping "${keyName}" for command "${command.id}"`);
-        }
-        return key;
-      });
-
-      return [command.id, keys];
-    })
-  );
-}
-
-const commandKeyMap = getCommandKeyMap();
+const commandKeyMap = buildCommandKeyMap(COMMANDS, Key);
+const pairGuard = createPairGuard({
+  maxAttempts: PAIR_MAX_ATTEMPTS,
+  windowMs: PAIR_WINDOW_MS,
+  lockoutMs: PAIR_LOCKOUT_MS
+});
 
 function json(res, statusCode, body) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff'
   });
   res.end(JSON.stringify(body));
 }
@@ -90,25 +100,6 @@ function sendDevFallback(res) {
     <p>Run <code>npm run build</code> before <code>npm start</code>, or use <code>npm run dev</code> and open the Vite URL.</p>
   </body>
 </html>`);
-}
-
-function safeResolveStaticPath(pathname) {
-  let decodedPath;
-  try {
-    decodedPath = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-
-  const requestedPath = decodedPath === '/' ? '/index.html' : decodedPath;
-  const resolvedPath = path.normalize(path.join(DIST_DIR, requestedPath));
-  const relativePath = path.relative(DIST_DIR, resolvedPath);
-
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    return null;
-  }
-
-  return resolvedPath;
 }
 
 function serveStatic(req, res) {
@@ -134,7 +125,7 @@ function serveStatic(req, res) {
     return;
   }
 
-  const staticPath = safeResolveStaticPath(url.pathname);
+  const staticPath = safeResolveStaticPath(DIST_DIR, url.pathname);
   if (!staticPath) {
     res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Bad request');
@@ -148,7 +139,8 @@ function serveStatic(req, res) {
 
   res.writeHead(200, {
     'Content-Type': mimeTypes[extension] || 'application/octet-stream',
-    'Cache-Control': fileToServe === INDEX_FILE ? 'no-store' : 'public, max-age=31536000, immutable'
+    'Cache-Control': fileToServe === INDEX_FILE ? 'no-store' : 'public, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff'
   });
 
   if (req.method === 'HEAD') {
@@ -180,20 +172,6 @@ function getAllowedOriginHosts() {
   return new Set(['localhost', '127.0.0.1', ...getLocalAddresses()]);
 }
 
-function isAllowedOrigin(origin) {
-  if (!origin) {
-    return true;
-  }
-
-  try {
-    const url = new URL(origin);
-    const allowedPorts = new Set([String(PORT), String(FRONTEND_DEV_PORT)]);
-    return getAllowedOriginHosts().has(url.hostname) && allowedPorts.has(url.port || '80');
-  } catch {
-    return false;
-  }
-}
-
 function safeSend(ws, payload) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
@@ -208,34 +186,6 @@ function makeStatus(state) {
     profiles: PROFILES,
     commands: COMMANDS
   };
-}
-
-function parseMessage(message) {
-  if (message.length > MAX_MESSAGE_BYTES) {
-    return { ok: false, error: 'Message is too large.' };
-  }
-
-  try {
-    const data = JSON.parse(message.toString());
-    if (!data || typeof data !== 'object') {
-      return { ok: false, error: 'Message must be a JSON object.' };
-    }
-    return { ok: true, data };
-  } catch {
-    return { ok: false, error: 'Message must be valid JSON.' };
-  }
-}
-
-function isRateLimited(state) {
-  const now = Date.now();
-  state.commandTimestamps = state.commandTimestamps.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-
-  if (state.commandTimestamps.length >= RATE_LIMIT_MAX_COMMANDS) {
-    return true;
-  }
-
-  state.commandTimestamps.push(now);
-  return false;
 }
 
 async function pressKeys(keys) {
@@ -283,17 +233,22 @@ wss.on('connection', (ws, req) => {
   };
   const client = req.socket.remoteAddress || 'unknown device';
 
-  if (!isAllowedOrigin(req.headers.origin)) {
+  if (!isAllowedOrigin(req.headers.origin, getAllowedOriginHosts(), allowedOriginPorts)) {
     safeSend(ws, { type: 'error', code: 'origin_denied', message: 'This origin is not allowed.' });
     ws.close(1008, 'Origin not allowed');
     return;
   }
 
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
   console.log(`Remote connected from ${client}`);
   safeSend(ws, makeStatus(state));
 
   ws.on('message', async (message) => {
-    const parsed = parseMessage(message);
+    const parsed = parseMessage(message, MAX_MESSAGE_BYTES);
     if (!parsed.ok) {
       safeSend(ws, { type: 'error', code: 'bad_message', message: parsed.error });
       return;
@@ -301,15 +256,24 @@ wss.on('connection', (ws, req) => {
 
     const data = parsed.data;
 
-    if (data.type === 'ping') {
-      safeSend(ws, { type: 'status', connected: true, paired: state.paired });
-      return;
-    }
-
     if (data.type === 'pair') {
+      const now = Date.now();
+      const lock = pairGuard.status(client, now);
+
+      if (lock.locked) {
+        const seconds = Math.ceil(lock.retryAfterMs / 1000);
+        safeSend(ws, {
+          type: 'error',
+          code: 'pairing_locked',
+          message: `Too many incorrect PINs. Try again in ${seconds}s.`
+        });
+        return;
+      }
+
       const pin = typeof data.pin === 'string' ? data.pin.trim() : '';
 
       if (pin === PAIRING_PIN) {
+        pairGuard.recordSuccess(client);
         state.paired = true;
         state.commandTimestamps = [];
         safeSend(ws, { type: 'paired' });
@@ -318,7 +282,18 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      safeSend(ws, { type: 'error', code: 'pairing_failed', message: 'Incorrect pairing PIN.' });
+      const failure = pairGuard.recordFailure(client, now);
+      if (failure.locked) {
+        const seconds = Math.ceil(failure.retryAfterMs / 1000);
+        safeSend(ws, {
+          type: 'error',
+          code: 'pairing_locked',
+          message: `Too many incorrect PINs. Try again in ${seconds}s.`
+        });
+        console.warn(`Pairing locked for ${client} after ${PAIR_MAX_ATTEMPTS} failed attempts`);
+      } else {
+        safeSend(ws, { type: 'error', code: 'pairing_failed', message: 'Incorrect pairing PIN.' });
+      }
       return;
     }
 
@@ -341,7 +316,9 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      if (isRateLimited(state)) {
+      const rateLimit = checkRateLimit(state.commandTimestamps, Date.now(), RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_COMMANDS);
+      state.commandTimestamps = rateLimit.timestamps;
+      if (rateLimit.limited) {
         safeSend(ws, { type: 'error', code: 'rate_limited', message: 'Slow down before sending more commands.' });
         return;
       }
@@ -363,7 +340,48 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log(`Remote disconnected from ${client}`);
   });
+
+  ws.on('error', (error) => {
+    console.error(`Socket error from ${client}:`, error.message);
+  });
 });
+
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, HEARTBEAT_INTERVAL_MS);
+heartbeat.unref();
+
+const pairGuardCleanup = setInterval(() => pairGuard.prune(Date.now()), PAIR_LOCKOUT_MS);
+pairGuardCleanup.unref();
+
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log(`\nReceived ${signal}, shutting down.`);
+
+  clearInterval(heartbeat);
+  clearInterval(pairGuardCleanup);
+
+  for (const ws of wss.clients) {
+    ws.close(1001, 'Server shutting down');
+  }
+  wss.close();
+  httpServer.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 function withPin(url) {
   return `${url}/?pin=${encodeURIComponent(PAIRING_PIN)}`;

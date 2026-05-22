@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CommandId, ProfileId } from '../protocol';
 import type { ClientMessage, RemoteSocketState, ServerMessage } from './types';
 
+const INITIAL_RECONNECT_MS = 600;
+const MAX_RECONNECT_MS = 4000;
+
 function getWebSocketUrl() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const hostname = window.location.hostname;
@@ -19,15 +22,19 @@ function parseServerMessage(data: string): ServerMessage | undefined {
   }
 }
 
+function isPairingError(code?: string) {
+  return code === 'pairing_failed' || code === 'pairing_locked';
+}
+
 export function useRemoteSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | undefined>(undefined);
-  const reconnectDelayRef = useRef(600);
+  const reconnectDelayRef = useRef(INITIAL_RECONNECT_MS);
   const lastPinRef = useRef('');
-  const shouldReconnectRef = useRef(true);
   const [state, setState] = useState<RemoteSocketState>({
     connection: 'connecting',
     paired: false,
+    hasPaired: false,
     lastEvent: 'Connecting to laptop'
   });
 
@@ -58,7 +65,7 @@ export function useRemoteSocket() {
   const sendCommand = useCallback((command: CommandId, profile: ProfileId) => {
     const sent = send({ type: 'command', command, profile });
     if (sent) {
-      navigator.vibrate?.(25);
+      navigator.vibrate?.(18);
       setState((current) => ({
         ...current,
         lastError: undefined,
@@ -82,7 +89,10 @@ export function useRemoteSocket() {
       wsRef.current = ws;
 
       ws.addEventListener('open', () => {
-        reconnectDelayRef.current = 600;
+        if (wsRef.current !== ws) {
+          return;
+        }
+        reconnectDelayRef.current = INITIAL_RECONNECT_MS;
         setState((current) => ({
           ...current,
           connection: 'connected',
@@ -96,6 +106,9 @@ export function useRemoteSocket() {
       });
 
       ws.addEventListener('message', (event) => {
+        if (wsRef.current !== ws) {
+          return;
+        }
         const message = parseServerMessage(event.data);
         if (!message) {
           return;
@@ -106,6 +119,7 @@ export function useRemoteSocket() {
             ...current,
             connection: message.connected ? 'connected' : current.connection,
             paired: message.paired,
+            hasPaired: current.hasPaired || message.paired,
             lastError: undefined,
             lastEvent: message.paired ? 'Paired and ready' : 'Connected'
           }));
@@ -117,6 +131,7 @@ export function useRemoteSocket() {
             ...current,
             connection: 'connected',
             paired: true,
+            hasPaired: true,
             lastError: undefined,
             lastEvent: 'Paired and ready'
           }));
@@ -128,14 +143,17 @@ export function useRemoteSocket() {
             ...current,
             lastAck: message.command,
             lastError: undefined,
-            lastEvent: message.dryRun ? 'Command acknowledged in dry run' : 'Command acknowledged'
+            lastEvent: message.dryRun ? 'Command sent (dry run)' : 'Command delivered'
           }));
           return;
         }
 
         if (message.type === 'error') {
+          const pairingError = isPairingError(message.code);
           setState((current) => ({
             ...current,
+            paired: pairingError ? false : current.paired,
+            hasPaired: pairingError ? false : current.hasPaired,
             lastError: message.message,
             lastEvent: message.message
           }));
@@ -143,22 +161,26 @@ export function useRemoteSocket() {
       });
 
       ws.addEventListener('close', () => {
-        if (!shouldReconnectRef.current) {
+        if (wsRef.current !== ws) {
           return;
         }
+        wsRef.current = null;
 
         setState((current) => ({
           ...current,
           connection: 'disconnected',
           paired: false,
-          lastEvent: 'Disconnected'
+          lastEvent: 'Reconnecting to laptop'
         }));
 
         reconnectTimerRef.current = window.setTimeout(connect, reconnectDelayRef.current);
-        reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 1.5, 4000);
+        reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 1.5, MAX_RECONNECT_MS);
       });
 
       ws.addEventListener('error', () => {
+        if (wsRef.current !== ws) {
+          return;
+        }
         setState((current) => ({
           ...current,
           connection: 'error',
@@ -169,13 +191,13 @@ export function useRemoteSocket() {
       });
     }
 
-    shouldReconnectRef.current = true;
     connect();
 
     return () => {
-      shouldReconnectRef.current = false;
       window.clearTimeout(reconnectTimerRef.current);
-      wsRef.current?.close();
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
     };
   }, []);
 

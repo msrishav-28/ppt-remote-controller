@@ -1,6 +1,6 @@
 {
   "name": "presentation-remote",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A Wi-Fi WebSocket slide remote for controlling presentations from a phone browser.",
   "main": "server.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "node server.js",
     "typecheck": "tsc --noEmit",
+    "test": "node --test",
     "preview": "vite preview --host 0.0.0.0"
   },
   "keywords": [
@@ -16,8 +17,19 @@
     "websocket",
     "slides"
   ],
-  "author": "",
+  "author": "M S Rishav Subhin",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/msrishav-28/ppt-remote-controller.git"
+  },
+  "bugs": {
+    "url": "https://github.com/msrishav-28/ppt-remote-controller/issues"
+  },
+  "homepage": "https://github.com/msrishav-28/ppt-remote-controller#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
     "qrcode-terminal": "^0.12.0",

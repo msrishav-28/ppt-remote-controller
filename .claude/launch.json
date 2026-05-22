@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "remote",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 3000,
+      "env": {
+        "DRY_RUN_KEYS": "1",
+        "CONTROL_PIN": "1234"
+      }
+    }
+  ]
+}

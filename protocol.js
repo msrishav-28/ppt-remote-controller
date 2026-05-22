@@ -45,7 +45,7 @@ const COMMANDS = {
     shortLabel: 'Next',
     hint: 'Arrow Right',
     keyNames: ['Right'],
-    tone: 'neutral'
+    tone: 'primary'
   },
   black: {
     id: 'black',
