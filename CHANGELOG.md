@@ -22,8 +22,11 @@ and full documentation.
 - Progressive web app support — web manifest, app icon, and meta tags so the
   remote can be installed to a phone's home screen.
 - `.env.example` documenting every configuration variable.
-- Documentation: setup, usage, troubleshooting, and architecture guides, a
-  contributing guide, a changelog, and an MIT `LICENSE` file.
+- Automated installer scripts for macOS, Linux (`scripts/install.sh`), and
+  Windows (`scripts/install.ps1`) — one command clones, installs, tests, and
+  builds.
+- Documentation: install, setup, usage, troubleshooting, and architecture
+  guides, a contributing guide, a changelog, and an MIT `LICENSE` file.
 
 ### Changed
 

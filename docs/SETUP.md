@@ -3,6 +3,11 @@
 This guide covers installing and running Slide Remote on the laptop that drives
 your presentation. The phone needs nothing installed — it just opens a web page.
 
+> **Looking for the fastest path?** The [Install guide](INSTALL.md) covers an
+> automated installer script for macOS, Linux, and Windows that does
+> everything below in one command. This guide is the step-by-step manual
+> version for people who want to know exactly what's happening.
+
 - [Requirements](#requirements)
 - [Install](#install)
 - [Build and run](#build-and-run)

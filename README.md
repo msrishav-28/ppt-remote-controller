@@ -43,7 +43,32 @@ No app store, no cloud, no account. Everything stays on your own network.
 You need [Node.js](https://nodejs.org) 20 or newer on the laptop. The phone
 needs nothing but a browser.
 
+### Automated install (recommended)
+
+One command — clones the repo, installs dependencies, runs the tests, and
+builds the phone app:
+
+**macOS / Linux**
+
 ```bash
+curl -fsSL https://raw.githubusercontent.com/msrishav-28/ppt-remote-controller/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/msrishav-28/ppt-remote-controller/main/scripts/install.ps1 | iex
+```
+
+Then `cd ppt-remote-controller && npm start`. Pass `--start` (bash) or `-Start`
+(PowerShell) to start the server in the same command. Full details, flags, and
+the safer clone-first variant are in the [Install guide](docs/INSTALL.md).
+
+### Manual install
+
+```bash
+git clone https://github.com/msrishav-28/ppt-remote-controller.git
+cd ppt-remote-controller
 npm install
 npm run build
 npm start
@@ -145,7 +170,8 @@ npm run build      # bundle the web app into dist/
 
 | Guide | What it covers |
 | --- | --- |
-| [Setup Guide](docs/SETUP.md) | Installing, building, network setup, configuration. |
+| [Install guide](docs/INSTALL.md) | The automated installer scripts, options, and prerequisites. |
+| [Setup Guide](docs/SETUP.md) | Manual installing, building, network setup, configuration. |
 | [Usage Guide](docs/USAGE.md) | Pairing and presenting — for everyday use. |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Fixes for common problems. |
 | [Architecture](docs/ARCHITECTURE.md) | How it is built, the protocol, extending it. |
